@@ -2,10 +2,9 @@ name: E2E Tests
 
 on:
   push:
-    branches: [main]
+    branches: [posthog]
   pull_request:
-  schedule:
-    - cron: "0 0 * * *"
+    branches: [posthog]
 
 permissions:
   contents: read
