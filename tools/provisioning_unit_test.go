@@ -5,6 +5,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -49,8 +50,15 @@ func repositoryListFixture() map[string]any {
 					"sync":  map[string]any{"enabled": false},
 				},
 				"status": map[string]any{
-					"health": map[string]any{"healthy": false},
-					"sync":   map[string]any{"state": "pending"},
+					"health": map[string]any{
+						"healthy": false,
+						"error":   "health",
+						"message": []string{"branch not found"},
+					},
+					"sync": map[string]any{
+						"state":   "error",
+						"message": syncMessagesFixture(25),
+					},
 				},
 			},
 			map[string]any{
@@ -110,7 +118,14 @@ func TestListProvisioningRepositories_DefaultNamespace(t *testing.T) {
 	assert.Empty(t, local.Branch)
 	assert.False(t, local.SyncEnabled)
 	assert.False(t, local.Healthy)
-	assert.Equal(t, "pending", local.SyncState)
+	assert.Equal(t, "error", local.SyncState)
+	assert.Equal(t, "health", local.HealthError)
+	assert.Equal(t, []string{"branch not found"}, local.HealthMessages)
+	require.Len(t, local.SyncMessages, maxSyncMessages+1)
+	assert.Equal(t, "file-0.json: invalid", local.SyncMessages[0])
+	assert.Equal(t, "... 5 more", local.SyncMessages[maxSyncMessages])
+	assert.Empty(t, gh.HealthMessages)
+	assert.Empty(t, gh.SyncMessages)
 
 	git := out[2]
 	assert.Equal(t, "git-plain", git.Name)
@@ -373,4 +388,12 @@ func TestValidateProvisioningFile_ServerErrorStatusIsError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 500")
+}
+
+func syncMessagesFixture(n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("file-%d.json: invalid", i)
+	}
+	return out
 }

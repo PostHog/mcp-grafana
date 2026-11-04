@@ -34,7 +34,16 @@ type ProvisioningRepository struct {
 	Workflows   []string `json:"workflows,omitempty"`
 	Healthy     bool     `json:"healthy"`
 	SyncState   string   `json:"syncState,omitempty"`
+	// Why the repository is unhealthy or its last sync failed, as Grafana
+	// reports it. HealthError is "health" (connection check) or "hook".
+	HealthError    string   `json:"healthError,omitempty"`
+	HealthMessages []string `json:"healthMessages,omitempty"`
+	SyncMessages   []string `json:"syncMessages,omitempty"`
 }
+
+// maxSyncMessages bounds the sync messages returned per repository. A failed
+// sync of a large repository can report one message per file.
+const maxSyncMessages = 20
 
 // raw response shapes — only the fields we care about.
 type repositoryListResponse struct {
@@ -68,10 +77,13 @@ type repositoryItem struct {
 	} `json:"spec"`
 	Status struct {
 		Health struct {
-			Healthy bool `json:"healthy"`
+			Healthy bool     `json:"healthy"`
+			Error   string   `json:"error"`
+			Message []string `json:"message"`
 		} `json:"health"`
 		Sync struct {
-			State string `json:"state"`
+			State   string   `json:"state"`
+			Message []string `json:"message"`
 		} `json:"sync"`
 	} `json:"status"`
 }
@@ -139,6 +151,13 @@ func listProvisioningRepositories(ctx context.Context, _ ListProvisioningReposit
 			Workflows:   item.Spec.Workflows,
 			Healthy:     item.Status.Health.Healthy,
 			SyncState:   item.Status.Sync.State,
+
+			HealthError:    item.Status.Health.Error,
+			HealthMessages: item.Status.Health.Message,
+			SyncMessages:   item.Status.Sync.Message,
+		}
+		if n := len(r.SyncMessages); n > maxSyncMessages {
+			r.SyncMessages = append(r.SyncMessages[:maxSyncMessages:maxSyncMessages], fmt.Sprintf("... %d more", n-maxSyncMessages))
 		}
 		switch item.Spec.Type {
 		case "github":
@@ -160,7 +179,8 @@ func listProvisioningRepositories(ctx context.Context, _ ListProvisioningReposit
 var ListProvisioningRepositories = mcpgrafana.MustTool(
 	"list_provisioning_repositories",
 	"List provisioning repositories (e.g. git-sync sources) configured for this Grafana instance. "+
-		"Returns each repository's slug along with its source URL, branch, path, sync state, and health. "+
+		"Returns each repository's slug along with its source URL, branch, path, sync state, and health, "+
+		"plus Grafana's health and last-sync messages explaining an unhealthy repository or a failed sync. "+
 		"The `name` is the slug used to render not-yet-applied dashboard previews.",
 	listProvisioningRepositories,
 	mcpgrafana.WithTitleAnnotation("List provisioning repositories"),
