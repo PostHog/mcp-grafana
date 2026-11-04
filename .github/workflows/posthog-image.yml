@@ -1,7 +1,9 @@
 name: PostHog Image
 
 # Builds the PostHog fork image. Pushes to the posthog branch publish
-# ghcr.io/posthog/mcp-grafana:<version>, which the charts repo pins by digest.
+# ghcr.io/posthog/mcp-grafana:<version> and, once the publish role variable is
+# set, the shared-services ECR repository mcp-grafana. The ECR digest then goes
+# to PostHog/charts state/grafana-mcp.yaml through commit_state_update.
 # Pull requests only build amd64 to check the Dockerfile.
 on:
   push:
@@ -17,12 +19,20 @@ concurrency:
   group: posthog-image-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  ECR_REPOSITORY: 520209747622.dkr.ecr.us-east-1.amazonaws.com/mcp-grafana
+
 jobs:
   image:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+      id-token: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      digest: ${{ steps.build.outputs.digest }}
+      ecr: ${{ steps.ecr.outputs.enabled }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -38,6 +48,19 @@ jobs:
           version=$(git describe --tags --match 'v*' HEAD)
           echo "version=${version#v}" >> "$GITHUB_OUTPUT"
 
+      # ECR publishing starts when posthog-cloud-infra has created
+      # github-mcp-grafana-publish-role and its ARN is in this variable.
+      - name: Check ECR publishing
+        id: ecr
+        env:
+          ROLE: ${{ vars.AWS_ECR_SHARED_SERVICES_PUBLISH_IAM_ROLE }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != "pull_request" && -n "$ROLE" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
@@ -47,7 +70,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The Dockerfile cross-compiles, so arm64 needs no QEMU.
+      - uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        if: steps.ecr.outputs.enabled == 'true'
+        with:
+          role-to-assume: ${{ vars.AWS_ECR_SHARED_SERVICES_PUBLISH_IAM_ROLE }}
+          aws-region: us-east-1
+
+      - uses: aws-actions/amazon-ecr-login@f2e9fc6c2b355c1890b65e6f6f0e2ac3e6e22f78 # v2.1.2
+        if: steps.ecr.outputs.enabled == 'true'
+
+      # The Dockerfile cross-compiles, so arm64 needs no QEMU. Empty tag lines
+      # are dropped, so the ECR tags apply only when ECR publishing is on.
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         id: build
         with:
@@ -58,6 +91,8 @@ jobs:
           tags: |
             ghcr.io/posthog/mcp-grafana:${{ steps.version.outputs.version }}
             ghcr.io/posthog/mcp-grafana:posthog
+            ${{ steps.ecr.outputs.enabled == 'true' && format('{0}:{1}', env.ECR_REPOSITORY, steps.version.outputs.version) || '' }}
+            ${{ steps.ecr.outputs.enabled == 'true' && format('{0}:posthog', env.ECR_REPOSITORY) || '' }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -68,4 +103,52 @@ jobs:
       - name: Summary
         if: github.event_name != 'pull_request'
         run: |
-          echo "Pin in charts: \`sha: \"${{ steps.version.outputs.version }}@${{ steps.build.outputs.digest }}\"\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image: \`${{ steps.version.outputs.version }}@${{ steps.build.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # Sends the digest to PostHog/charts, like other shared-services images.
+  # charts' state-update workflow writes it to state/grafana-mcp.yaml. It sets
+  # sha and dev: dev and the environments without a dev/prod track take the
+  # build. prod-us, prod-eu and internal read image.prod, which a deliberate
+  # promotion moves. CHARTS_DISPATCH_ENABLED="false" stops the dispatch.
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: image
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/posthog'
+      && needs.image.outputs.ecr == 'true'
+      && vars.CHARTS_DISPATCH_ENABLED != 'false'
+    permissions: {}
+    steps:
+      - name: Get deployer token
+        id: deployer
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        with:
+          client-id: ${{ secrets.GH_APP_CHARTS_DEPLOYER_APP_ID }}
+          private-key: ${{ secrets.GH_APP_CHARTS_DEPLOYER_PRIVATE_KEY }}
+          owner: PostHog
+          repositories: charts
+
+      # The payload must match the commit_state_update contract of charts'
+      # state-update workflow. GitHub accepts any dispatch, so a mismatch fails
+      # silently.
+      - name: Update charts state
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
+        with:
+          token: ${{ steps.deployer.outputs.token }}
+          repository: PostHog/charts
+          event-type: commit_state_update
+          client-payload: |
+            {
+              "release": "grafana-mcp",
+              "values": {
+                "image": {
+                  "sha": "${{ needs.image.outputs.version }}@${{ needs.image.outputs.digest }}",
+                  "dev": "${{ needs.image.outputs.version }}@${{ needs.image.outputs.digest }}"
+                }
+              },
+              "commit": ${{ toJson(github.event.head_commit) }},
+              "repository": ${{ toJson(github.repository) }},
+              "labels": [],
+              "timestamp": "${{ github.event.head_commit.timestamp }}"
+            }
