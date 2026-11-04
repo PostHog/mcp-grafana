@@ -1,5 +1,13 @@
 # Grafana MCP server
 
+> [!IMPORTANT]
+> **This is PostHog's internal fork of [grafana/mcp-grafana](https://github.com/grafana/mcp-grafana), not the official project.**
+> The `posthog` branch is upstream `main` plus a couple of features PostHog needs internally while we wait for them to land upstream. Today that is:
+>
+> - Saving Git Sync managed dashboards through the repository files API ([grafana/mcp-grafana#1447](https://github.com/grafana/mcp-grafana/pull/1447)).
+>
+> Everything else is unchanged upstream code. For general use, issues and contributions, go to [grafana/mcp-grafana](https://github.com/grafana/mcp-grafana). We drop each change here once upstream releases it.
+
 [![Unit Tests](https://github.com/grafana/mcp-grafana/actions/workflows/unit.yml/badge.svg)](https://github.com/grafana/mcp-grafana/actions/workflows/unit.yml)
 [![Integration Tests](https://github.com/grafana/mcp-grafana/actions/workflows/integration.yml/badge.svg)](https://github.com/grafana/mcp-grafana/actions/workflows/integration.yml)
 [![E2E Tests](https://github.com/grafana/mcp-grafana/actions/workflows/e2e.yml/badge.svg)](https://github.com/grafana/mcp-grafana/actions/workflows/e2e.yml)
