@@ -394,3 +394,34 @@ func TestFanoutHandler_PanicWritesStackToStderr(t *testing.T) {
 // directly to os.Stderr rather than via slog.Default()) is defensive against a
 // feedback loop and is simple enough that the failure mode — recursion — would
 // surface as a stack blow-up in manual / integration testing.
+
+// TestOTLPEndpoints_DisabledBySDKDisabled verifies that OTEL_SDK_DISABLED=true
+// turns off both trace and log export even when an endpoint is set, as the
+// OpenTelemetry spec requires. Deployments that disable telemetry this way
+// still set OTEL_EXPORTER_OTLP_ENDPOINT, so the endpoint alone must not enable
+// export.
+func TestOTLPEndpoints_DisabledBySDKDisabled(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://generic:4317")
+	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "")
+	t.Setenv("OTEL_TRACES_EXPORTER", "otlp")
+	t.Setenv("OTEL_LOGS_EXPORTER", "")
+
+	t.Setenv("OTEL_SDK_DISABLED", "true")
+	assert.Empty(t, OTLPTracesEndpoint())
+	assert.Empty(t, OTLPLogsEndpoint())
+
+	t.Setenv("OTEL_SDK_DISABLED", "false")
+	assert.Equal(t, "http://generic:4317", OTLPTracesEndpoint())
+	assert.Equal(t, "http://generic:4317", OTLPLogsEndpoint())
+}
+
+// TestOTLPTracesEndpoint_DisabledByExporterNone mirrors the logs case:
+// OTEL_TRACES_EXPORTER=none disables OTLP trace export.
+func TestOTLPTracesEndpoint_DisabledByExporterNone(t *testing.T) {
+	t.Setenv("OTEL_SDK_DISABLED", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://generic:4317")
+	t.Setenv("OTEL_TRACES_EXPORTER", "none")
+	assert.Empty(t, OTLPTracesEndpoint())
+}

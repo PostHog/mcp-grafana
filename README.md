@@ -1417,6 +1417,8 @@ OTEL_LOGS_EXPORTER=none
 
 This prevents the server from creating an OTLP logs exporter regardless of the endpoint configuration, avoiding errors like `unknown service opentelemetry.proto.collector.logs.v1.LogsService`.
 
+`OTEL_TRACES_EXPORTER=none` does the same for traces. `OTEL_SDK_DISABLED=true` turns off both trace and log export even when an endpoint is set, which is useful when a platform injects `OTEL_EXPORTER_OTLP_ENDPOINT` into every container.
+
 Stderr logging is unchanged when OTLP logging is enabled; you can continue to rely on container logs or pipe stderr to `/dev/null` if you prefer.
 
 ```bash

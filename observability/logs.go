@@ -14,13 +14,20 @@ import (
 	sdkresource "go.opentelemetry.io/otel/sdk/resource"
 )
 
+// sdkDisabled reports whether OTEL_SDK_DISABLED is "true", the standard
+// OpenTelemetry switch that turns off all OTLP export even when an endpoint
+// is set.
+func sdkDisabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("OTEL_SDK_DISABLED")), "true")
+}
+
 // OTLPLogsEndpoint returns the resolved OTLP logs endpoint, preferring the
 // signal-specific OTEL_EXPORTER_OTLP_LOGS_ENDPOINT over the generic
-// OTEL_EXPORTER_OTLP_ENDPOINT. Returns "" when neither is set or when
-// OTEL_LOGS_EXPORTER is set to "none", which is the signal that OTLP log
-// export is disabled.
+// OTEL_EXPORTER_OTLP_ENDPOINT. Returns "" when neither is set, when
+// OTEL_LOGS_EXPORTER is set to "none" or when OTEL_SDK_DISABLED is "true",
+// which is the signal that OTLP log export is disabled.
 func OTLPLogsEndpoint() string {
-	if strings.EqualFold(os.Getenv("OTEL_LOGS_EXPORTER"), "none") {
+	if sdkDisabled() || strings.EqualFold(os.Getenv("OTEL_LOGS_EXPORTER"), "none") {
 		return ""
 	}
 	if v := os.Getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"); v != "" {
@@ -31,9 +38,13 @@ func OTLPLogsEndpoint() string {
 
 // OTLPTracesEndpoint returns the resolved OTLP traces endpoint, preferring the
 // signal-specific OTEL_EXPORTER_OTLP_TRACES_ENDPOINT over the generic
-// OTEL_EXPORTER_OTLP_ENDPOINT. Returns "" when neither is set, which is the
-// signal that OTLP trace export is disabled.
+// OTEL_EXPORTER_OTLP_ENDPOINT. Returns "" when neither is set, when
+// OTEL_TRACES_EXPORTER is set to "none" or when OTEL_SDK_DISABLED is "true",
+// which is the signal that OTLP trace export is disabled.
 func OTLPTracesEndpoint() string {
+	if sdkDisabled() || strings.EqualFold(os.Getenv("OTEL_TRACES_EXPORTER"), "none") {
+		return ""
+	}
 	if v := os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"); v != "" {
 		return v
 	}
